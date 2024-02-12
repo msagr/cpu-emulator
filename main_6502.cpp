@@ -27,6 +27,14 @@ struct Mem {
     Byte& operator[] (u32 Address) { // writing Byte& operator[] (u32 Address) const is giving error, why?
         return Data[Address];
     }
+
+    // writing 2 bytes
+    void writeWord(Word Value, u32 Address, u32& cycle)
+    {
+        Data[Address] = Value & 0xFF;
+        Data[Address+1] = (Value >> 8);
+        cycle -= 2;
+    }
 };
 
 struct CPU {
@@ -65,8 +73,43 @@ struct CPU {
         return Data;
     }
 
+    Word FetchWord(u32& cycle, Mem& memory){
+
+        // 6502 is little endian
+        Word Data = memory[PC];
+        PC++;
+
+        Data |= (memory[PC] << 8);
+        PC++;
+        
+        cycle -= 2;
+
+        // if you want to handle endianness you would have to
+        // swap bytes here.
+        // if(PLATFORM_BIG_ENDIAN)
+        // SwapBytesInWord(Data)
+
+        return Data;
+    }
+
+    Byte ReadByte(u32& cycle, Byte& Address, Mem& memory){
+        
+        Byte Data = memory[Address];
+        cycle--;
+        return Data;
+    }
+
     // opcode
     static constexpr Byte INS_LDA_IM = 0xA9;
+    static constexpr Byte INS_LDA_ZP = 0xA5; // Zero page accumulator
+    static constexpr Byte INS_LDA_ZPX = 0xB5;
+    static constexpr Byte INS_JSR = 0x20; // JUMP ins.
+
+    void LDASetStatus(){
+
+        Z = (A == 0); // zero flag
+        N = (A & 0b10000000) > 0; // negative flag
+    }
 
     // to execute ins.
     void Execute(u32 cycle,  Mem& memory){
@@ -81,13 +124,41 @@ struct CPU {
                     Byte value = FetchByte(cycle, memory);
                     
                     A = value;
-                    Z = (A == 0);
-                    N = (A & 0b10000000) > 0;
+                    LDASetStatus();
+
+                } break;
+                case INS_LDA_ZP:
+                {
+                    Byte ZeroPageAddr = FetchByte(cycle, memory);
+                    
+                    A = ReadByte(cycle, ZeroPageAddr, memory);
+                    LDASetStatus();
+
+                } break;
+                case INS_LDA_ZPX:
+                {
+                    Byte ZeroPageAddr = FetchByte(cycle, memory);
+
+                    ZeroPageAddr += X;
+                    cycle--;
+                    A = ReadByte(cycle, ZeroPageAddr, memory);
+                    LDASetStatus();
+
+                } break;
+                case INS_JSR:
+                {
+                    Word SubAddr = FetchWord(cycle, memory);
+                    memory[SP] = PC - 1;
+                    memory.writeWord(PC - 1, SP, cycle);
+
+                    PC = SubAddr;
+                    cycle--;
 
                 } break;
                 default:
                 {
                     printf("Instruction not handled %d", Ins);
+
                 } break;
             }
         }
@@ -101,11 +172,13 @@ int main(){
     cpu.Reset(mem);
 
     // start - inline a little program
-    mem[0xFFFC] = CPU::INS_LDA_IM; // putting stuff in memory
-    mem[0xFFFD] = 0x42; 
-
+    mem[0xFFFC] = CPU::INS_JSR; // putting stuff in memory
+    mem[0xFFFD] = 0x42;
+    mem[0xFFFE] = 0x42;
+    mem[0x4242] = CPU::INS_LDA_IM;
+    mem[0x4243] = 0x84;
 
     // execute instruction
-    cpu.Execute(2, mem); // Execute(clock_cycle, memory)
+    cpu.Execute(9, mem); // Execute(clock_cycle, memory)
     return 0;
 }
